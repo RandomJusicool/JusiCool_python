@@ -3,6 +3,9 @@ from PyQt5.QtWidgets import *
 from PyQt5.QAxContainer import *
 from PyQt5.QtCore import QTimer
 import mysql.connector
+import time
+
+SLEEP_TIME = 3.6
 
 class MyWindow(QMainWindow):
     def __init__(self):
@@ -78,8 +81,8 @@ class MyWindow(QMainWindow):
             self.get_stock_list()
 
     def get_stock_list(self):
-        # 타이머 시작 (1초 간격으로 요청)
-        self.timer.start(1000)
+        # 타이머 시작 (3.6초 간격으로 요청)
+        time.sleep(SLEEP_TIME)
 
     def request_stock_data(self):
         if not self.stock_codes:
@@ -88,10 +91,15 @@ class MyWindow(QMainWindow):
 
         self.code = self.stock_codes.pop(0)
         self.request_price("5MIN")
+        # time.sleep(SLEEP_TIME)
         self.request_price("10MIN")
+        # time.sleep(SLEEP_TIME)
         self.request_price("24H")
+        # time.sleep(SLEEP_TIME)
         self.request_price("1WEEK")
+        # time.sleep(SLEEP_TIME)
         self.request_price("1MONTH")
+        # time.sleep(SLEEP_TIME)
 
     def request_price(self, interval):
         if interval == "5MIN":
@@ -126,40 +134,41 @@ class MyWindow(QMainWindow):
             volume = self.kiwoom.dynamicCall("CommGetData(QString, QString, QString, int, QString)", trcode, "", rqname, 0, "거래량")
             
             if name and volume:
-                self.update_db('name', name.strip())
-                self.update_db('volume', volume.strip())
+                self.update_db_bulk(self.code, name.strip(), volume.strip())
 
-        elif "opt10080" in rqname:
-            price_5min = self.kiwoom.dynamicCall("CommGetData(QString, QString, QString, int, QString)", trcode, "", rqname, 0, "현재가").strip()
-            if price_5min:
-                self.update_db('price_5min', price_5min)
-        elif "opt10081" in rqname:
-            price_24h = self.kiwoom.dynamicCall("CommGetData(QString, QString, QString, int, QString)", trcode, "", rqname, 0, "현재가").strip()
-            if price_24h:
-                self.update_db('price_24h', price_24h)
-        elif "opt10082" in rqname:
-            price_1week = self.kiwoom.dynamicCall("CommGetData(QString, QString, QString, int, QString)", trcode, "", rqname, 0, "현재가").strip()
-            if price_1week:
-                self.update_db('price_1week', price_1week)
-        elif "opt10083" in rqname:
-            price_1month = self.kiwoom.dynamicCall("CommGetData(QString, QString, QString, int, QString)", trcode, "", rqname, 0, "현재가").strip()
-            if price_1month:
-                self.update_db('price_1month', price_1month)
+        elif "opt10080" in rqname or "opt10081" in rqname or "opt10082" in rqname or "opt10083" in rqname:
+            price_5min = None
+            price_10min = None
+            price_24h = None
+            price_1week = None
 
-    def update_db(self, column, value):
+            if "opt10080" in rqname:
+                price_5min = self.kiwoom.dynamicCall("CommGetData(QString, QString, QString, int, QString)", trcode, "", rqname, 0, "현재가").strip()
+            elif "opt10081" in rqname:
+                price_10min = self.kiwoom.dynamicCall("CommGetData(QString, QString, QString, int, QString)", trcode, "", rqname, 0, "현재가").strip()
+            elif "opt10082" in rqname:
+                price_24h = self.kiwoom.dynamicCall("CommGetData(QString, QString, QString, int, QString)", trcode, "", rqname, 0, "현재가").strip()
+            elif "opt10083" in rqname:
+                price_1week = self.kiwoom.dynamicCall("CommGetData(QString, QString, QString, int, QString)", trcode, "", rqname, 0, "현재가").strip()
+
+            self.update_db_bulk(self.code, None, None, price_5min, price_10min, price_24h, price_1week)
+
+    def update_db_bulk(self, code, name=None, volume=None, price_5min=None, price_10min=None, price_24h=None, price_1week=None):
         try:
-            if column == 'volume':
-                value = int(value.replace(',', ''))  # 쉼표 제거 및 정수로 변환
+            if name is not None and volume is not None:
+                self.cursor.execute("INSERT INTO stock_data (code, name, volume) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE name = VALUES(name), volume = VALUES(volume)", (code, name, volume))
 
-            sql = f"INSERT IGNORE INTO stock_data (code, {column}) VALUES (%s, %s)"
-            val = (self.code, value)
+            if any([price_5min, price_10min, price_24h, price_1week]):
+                sql = "INSERT INTO stock_data (code, price_5min, price_10min, price_24h, price_1week) VALUES (%s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE price_5min = VALUES(price_5min), price_10min = VALUES(price_10min), price_24h = VALUES(price_24h), price_1week = VALUES(price_1week)"
+                val = (code, price_5min, price_10min, price_24h, price_1week)
+                self.cursor.execute(sql, val)
 
-            self.cursor.execute(sql, val)
             self.conn.commit()
-            self.text_edit.append(f"{column} 데이터베이스에 저장되었습니다.")
+            self.text_edit.append("데이터베이스에 저장되었습니다.")
 
         except mysql.connector.Error as e:
             self.text_edit.append(f"Error: {e}")
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
